@@ -13,12 +13,12 @@ export default tseslint.config(
 			},
 		},
 	},
-	stylistic.configs.customize({
-		indent: 'tab',
-		quotes: 'single',
-		semi: true,
-		braceStyle: '1tbs',
-	}),
+	// stylistic.configs.customize({
+	// 	indent: 'tab',
+	// 	quotes: 'single',
+	// 	semi: true,
+	// 	braceStyle: '1tbs',
+	// }),
 	{
 		rules: {
 			'@stylistic/max-len': ['error', {

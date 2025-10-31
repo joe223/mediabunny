@@ -10,6 +10,7 @@
 		"skipLibCheck": true,
 		"allowJs": true,
 		"noEmit": true,
+		"lib": ["ES2021", "DOM"]
 	},
 	"references": [
 		{ "path": "./tsconfig.vite.json" },
