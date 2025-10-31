@@ -4,8 +4,6 @@
  * Provides a minimal, KISS-style implementation that wraps Mediabunny to load, decode,
  * and render video/audio clips with precise seek capabilities and smooth playback.
  * Offers a simple scheduling interface and event callbacks for Editor integration.
- *
- * @author joe223
  */
 
 import {
@@ -18,7 +16,17 @@ import {
 	WrappedAudioBuffer,
 	WrappedCanvas,
 } from "mediabunny";
-import { EventEmitter } from "eventemitter3";
+import {
+	BaseMediaPlayer,
+	MediaPlayerEvent,
+	MediaPlayerState,
+	MediaProbeResult,
+	OnCreateAudioSourceParams,
+	MediaPlayerOptions,
+} from "./media-player-interface.js";
+
+export { MediaPlayerEvent };
+export type { MediaPlayerState, MediaProbeResult, OnCreateAudioSourceParams };
 
 /**
  * Loading delay in milliseconds to ensure proper frame rendering.
@@ -28,128 +36,55 @@ import { EventEmitter } from "eventemitter3";
 const LOADING_DELAY_MS = 16;
 
 /**
- * Event types emitted by the MediaPlayer component.
- * These events provide lifecycle and state change notifications.
+ * High-performance media player component designed for professional Web A/V Editor applications.
+ *
+ * ## Architecture Overview
+ * Built on top of MediaBunny's WebCodec-based media processing pipeline, this player provides:
+ * - **Frame-accurate playback control** with precise seeking capabilities
+ * - **Real-time audio/video synchronization** using Web Audio API scheduling
+ * - **Hardware-accelerated rendering** via Canvas 2D with optimized frame management
+ * - **Event-driven architecture** extending EventEmitter3 for seamless integration
+ * - **Memory-efficient streaming** with intelligent buffering and resource management
+ *
+ * ## Key Features
+ * - ✅ **Multi-format support**: MP4, WebM, MOV, AVI, and more via MediaBunny
+ * - ✅ **Precise frame control**: Seek to exact frame numbers with FPS awareness
+ * - ✅ **Professional audio**: Web Audio API with gain control and muting
+ * - ✅ **Responsive rendering**: Adaptive canvas scaling (contain/cover/fill)
+ * - ✅ **Performance monitoring**: Built-in buffering detection and lag reporting
+ * - ✅ **Type safety**: Full TypeScript support with comprehensive interfaces
+ *
+ * ## Implementation Details
+ * This class implements the `IMediaPlayer` interface to ensure API consistency across
+ * different player implementations.
+ *
+ * The player uses a dual-iterator pattern for audio/video streams, enabling independent
+ * processing and synchronization. Frame rendering is optimized with RAF-based loops and
+ * intelligent buffering to maintain smooth playback even with complex media files.
+ *
+ * @example
+ * ```typescript
+ * // Basic usage
+ * const player = new MediaPlayer({
+ *   canvas: document.getElementById('video-canvas'),
+ *   volume: 0.8,
+ *   enableAudio: true,
+ *   fit: 'contain'
+ * });
+ *
+ * // Load and play media
+ * await player.load('/path/to/video.mp4');
+ * await player.play();
+ *
+ * // Frame-accurate seeking
+ * await player.seekToFrame(150, 30); // Seek to frame 150 at 30fps
+ *
+ * // Event handling
+ * player.on('ready', () => console.log('Media loaded'));
+ * ```
+ * @author joe223
  */
-export enum ClipEvent {
-	READY = "ready",
-	PLAY = "play",
-	PAUSE = "pause",
-	STOP = "stop",
-	ENDED = "ended",
-	SEEKING = "seeking",
-	SEEKED = "seeked",
-	TIME_UPDATE = "timeupdate",
-	BUFFERING_START = "bufferingstart",
-	BUFFERING_END = "bufferingend",
-	ERROR = "error",
-}
-
-/**
- * Public state snapshot representing the current state of the media clip.
- * Provides read-only access to playback status and media properties.
- */
-export type ClipState = {
-	/** Whether the clip is currently playing */
-	playing: boolean;
-	/** Current playback time in seconds */
-	currentTime: number;
-	/** Total duration of the clip in seconds */
-	duration: number;
-	/** Whether the player is currently buffering */
-	buffering: boolean;
-	/** Whether the clip contains video content */
-	hasVideo: boolean;
-	/** Whether the clip contains audio content */
-	hasAudio: boolean;
-};
-
-/**
- * Event payload mapping for EventEmitter3 type safety.
- * Defines the argument types for each event that can be emitted by MediaPlayer.
- */
-export interface ClipEventMap {
-	[ClipEvent.READY]: [];
-	[ClipEvent.PLAY]: [];
-	[ClipEvent.PAUSE]: [];
-	[ClipEvent.STOP]: [];
-	[ClipEvent.ENDED]: [];
-	[ClipEvent.SEEKING]: [{ to: number }];
-	[ClipEvent.SEEKED]: [{ at: number }];
-	[ClipEvent.TIME_UPDATE]: [{ time: number }];
-	[ClipEvent.BUFFERING_START]: [];
-	[ClipEvent.BUFFERING_END]: [
-		{
-			lag: number;
-		}
-	];
-	[ClipEvent.ERROR]: [Error];
-}
-
-/**
- * Result type returned by media probing operations.
- * Contains information about media file compatibility and properties.
- */
-export type MediaProbeResult = {
-	/** Whether the media file can be successfully processed */
-	ok: boolean;
-	/** Error message if probing failed */
-	reason?: string;
-	/** Total duration of the media in seconds */
-	duration?: number;
-	/** Whether the media contains video tracks */
-	hasVideo?: boolean;
-	/** Whether the media contains audio tracks */
-	hasAudio?: boolean;
-	/** Whether video tracks can be decoded */
-	videoDecodable?: boolean;
-	/** Whether audio tracks can be decoded */
-	audioDecodable?: boolean;
-	/** Whether video supports transparency/alpha channel */
-	transparent?: boolean;
-};
-
-/**
- * Parameters passed to the onCreateAudioSource hook for custom audio processing.
- * Enables per-buffer audio effects and transformations.
- */
-export type OnCreateAudioSourceParams = {
-	/** The AudioContext currently used by this clip */
-	audioContext: AudioContext;
-	/** The freshly created AudioBufferSourceNode carrying the decoded audio buffer */
-	sourceNode: AudioBufferSourceNode;
-	/** The media timestamp in seconds of this audio buffer */
-	timestamp: number;
-	/** The current playback time on the clip's timeline in seconds */
-	timelineNow: number;
-};
-
-/**
- * Configuration options for initializing the MediaPlayer component.
- * Provides control over rendering, audio, and playback behavior.
- */
-export type VideoClipOptions = {
-	/** Target canvas element for video rendering */
-	canvas: HTMLCanvasElement | OffscreenCanvas;
-	/** Enable alpha channel rendering for transparent videos. Default: false */
-	allowAlpha?: boolean;
-	/** Canvas scaling behavior. Default: 'contain' */
-	fit?: "contain" | "cover" | "fill";
-	/** Enable audio playback if present. Default: true */
-	enableAudio?: boolean;
-	/** Initial volume level [0..1]. Default: 0.7 */
-	volume?: number;
-	/** Delay in ms before showing buffering indicator. Default: 16 */
-	loadingDelayMs?: number;
-	/** Override canvas dimensions. Default: use video's native size */
-	canvasSize?: { width: number; height: number };
-};
-
-/**
- * Minimal, KISS-style media player component for Web A/V Editor applications.
- * Extends EventEmitter3 for simple event integration and provides precise playback control.
- */
-export class MediaPlayer extends EventEmitter<ClipEventMap> {
+export class MediaPlayer extends BaseMediaPlayer {
 	// === Rendering Properties ===
 	/** Target canvas element for video rendering */
 	private canvas: HTMLCanvasElement | OffscreenCanvas;
@@ -169,15 +104,6 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	private gainNode: GainNode | null = null;
 	/** Set of currently scheduled audio buffer source nodes */
 	private queuedAudioNodes: Set<AudioBufferSourceNode> = new Set();
-
-	/**
-	 * Optional hook for custom audio processing per audio buffer.
-	 * Return an AudioNode to insert custom effects or processing chains.
-	 * If undefined/null is returned, audio connects directly to the master gain.
-	 *
-	 * @note The returned node MUST belong to the same AudioContext as provided in params.
-	 */
-	onCreateAudioSource?: (params: OnCreateAudioSourceParams) => AudioNode | null;
 
 	// === Media Processing ===
 	/** Video sink for decoding and rendering video frames */
@@ -258,8 +184,8 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 *
 	 * @throws {Error} When Web Audio API is not supported
 	 */
-	constructor(options: VideoClipOptions) {
-		super();
+	constructor(options: MediaPlayerOptions) {
+		super(options);
 		this.canvas = options.canvas;
 		this.context = this.canvas.getContext("2d")!;
 		this.volume = options.volume ?? 1;
@@ -376,8 +302,8 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 * @param resource - Media file (File object) or URL (string) to load
 	 * @throws {Error} When no decodable audio or video track is found, or Web Audio API is not supported
 	 *
-	 * @fires ClipEvent.READY When the media is successfully loaded and ready for playback
-	 * @fires ClipEvent.ERROR When an error occurs during loading
+	 * @fires MediaPlayerEvent.READY When the media is successfully loaded and ready for playback
+	 * @fires MediaPlayerEvent.ERROR When an error occurs during loading
 	 *
 	 * @example
 	 * ```typescript
@@ -391,8 +317,6 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 			this.disposeCurrentPlayback();
 			this.fileLoaded = false;
 			this.readyBorBuffering();
-
-			this.playbackTimeAtStart = 0;
 
 			const info = await MediaPlayer.probeInternal(resource);
 			this.totalDuration = info.duration;
@@ -446,11 +370,9 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 			await this.startVideoIterator();
 			this.fileLoaded = true;
-			this.emit(ClipEvent.READY);
-			this.startRenderLoop();
+			this.emit(MediaPlayerEvent.READY);
 		} catch (error) {
-			this.cancelBuffering();
-			this.emit(ClipEvent.ERROR, error as Error);
+			this.emit(MediaPlayerEvent.ERROR, error as Error);
 			throw error;
 		}
 	}
@@ -467,7 +389,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 * console.log(`Playing: ${state.playing}, Time: ${state.currentTime}/${state.duration}`);
 	 * ```
 	 */
-	getState(): ClipState {
+	getState(): MediaPlayerState {
 		return {
 			playing: this.playing,
 			currentTime: this.getPlaybackTime(),
@@ -484,8 +406,8 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 *
 	 * @returns Promise that resolves when playback has started
 	 *
-	 * @fires ClipEvent.PLAY When playback starts
-	 * @fires ClipEvent.ENDED When playback reaches the end of the media
+	 * @fires MediaPlayerEvent.PLAY When playback starts
+	 * @fires MediaPlayerEvent.ENDED When playback reaches the end of the media
 	 *
 	 * @example
 	 * ```typescript
@@ -509,7 +431,8 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 		// if (this.getPlaybackTime() >= this.totalDuration) {
 		// 	this.playbackTimeAtStart = 0;
 		// }
-		await this.startVideoIterator();
+		// no need to recreate iterator, play is just a resume action
+		// await this.startVideoIterator();
 		this.audioContextStartTime = this.audioContext!.currentTime;
 		this.playing = true;
 		this.startRenderLoop();
@@ -520,14 +443,14 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 			void this.runAudioIterator();
 		}
 
-		this.emit(ClipEvent.PLAY);
+		this.emit(MediaPlayerEvent.PLAY);
 	}
 
 	/**
 	 * Pauses media playback.
 	 * This method stops audio playback, clears queued audio nodes, and preserves the current playback position.
 	 *
-	 * @fires ClipEvent.PAUSE When playback is paused
+	 * @fires MediaPlayerEvent.PAUSE When playback is paused
 	 *
 	 * @example
 	 * ```typescript
@@ -546,7 +469,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 		for (const node of this.queuedAudioNodes) node.stop();
 		this.queuedAudioNodes.clear();
 
-		this.emit(ClipEvent.PAUSE);
+		this.emit(MediaPlayerEvent.PAUSE);
 	}
 
 	/**
@@ -556,8 +479,8 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 * @param seconds - Target time position in seconds (will be clamped to [0, duration])
 	 * @returns Promise that resolves when seeking is complete
 	 *
-	 * @fires ClipEvent.SEEKING When seeking starts with target position
-	 * @fires ClipEvent.SEEKED When seeking completes with actual position
+	 * @fires MediaPlayerEvent.SEEKING When seeking starts with target position
+	 * @fires MediaPlayerEvent.SEEKED When seeking completes with actual position
 	 *
 	 * @example
 	 * ```typescript
@@ -569,7 +492,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 		if (this.getPlaybackTime() === seekTo) return;
 
-		this.emit(ClipEvent.SEEKING, { to: seekTo });
+		this.emit(MediaPlayerEvent.SEEKING, { to: seekTo });
 		this.cancelBuffering();
 		const wasPlaying = this.playing;
 		if (wasPlaying) this.pause();
@@ -579,25 +502,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 		if (wasPlaying && this.playbackTimeAtStart < this.totalDuration)
 			void this.play();
-		this.emit(ClipEvent.SEEKED, { at: seconds });
-	}
-
-	/**
-	 * Seeks to a specific frame position in the media (frame-accurate seeking).
-	 * This is a convenience method that converts frame number to time and calls seekToTime.
-	 *
-	 * @param frame - Target frame number (0-based)
-	 * @param fps - Frame rate to use for time conversion
-	 * @returns Promise that resolves when seeking is complete
-	 *
-	 * @example
-	 * ```typescript
-	 * await player.seekToFrame(750, 30); // Seek to frame 750 at 30fps (25 seconds)
-	 * ```
-	 */
-	async seekToFrame(frame: number, fps: number): Promise<void> {
-		const seconds = frame / fps;
-		return this.seekToTime(seconds);
+		this.emit(MediaPlayerEvent.SEEKED, { at: seconds });
 	}
 
 	/**
@@ -674,9 +579,14 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	private disposeCurrentPlayback() {
 		this.playing = false;
 		this.fileLoaded = false;
+		this.bufferingStartPlaybackTime = 0;
+		this.playbackTimeAtStart = 0;
 
 		// Increment async ID to invalidate any pending async operations
 		this.asyncId++;
+		// Clean up buffering state
+		this.bufferingSyncId = this.asyncId;
+		this.cancelBuffering();
 
 		// Clean up video and audio iterators
 		void this.videoFrameIterator?.return();
@@ -695,8 +605,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 			this.intervalId = null;
 		}
 
-		// Clean up buffering state and audio nodes
-		this.cancelBuffering();
+		// Clean up audio nodes
 		for (const node of this.queuedAudioNodes) node.stop();
 		this.queuedAudioNodes.clear();
 	}
@@ -716,7 +625,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 		const playbackTime = this.getPlaybackTime();
 		this.videoFrameIterator = this.videoSink.canvases(playbackTime);
-		const videoIterator = this.videoFrameIterator;
+		const videoIterator = this.videoFrameIterator!;
 
 		// Fetch and display first frame
 		this.readyBorBuffering();
@@ -732,7 +641,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 		// Pre-fetch second frame for smooth playback
 		this.readyBorBuffering();
-		const secondFrame = (await videoIterator.next()).value ?? null;
+		const secondFrame = (await videoIterator?.next())?.value ?? null;
 		this.cancelBuffering();
 		if (this.videoFrameIterator !== videoIterator) return;
 
@@ -761,7 +670,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 
 				// Emit time update events during active playback (throttling can be added if needed)
 				if (this.playing && !this.isBuffering) {
-					this.emit(ClipEvent.TIME_UPDATE, { time: playbackTime });
+					this.emit(MediaPlayerEvent.TIME_UPDATE, { time: playbackTime });
 				}
 
 				// Render the next frame if it's ready and due for display
@@ -780,7 +689,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 				if (isEnded) {
 					this.pause();
 					this.playbackTimeAtStart = this.totalDuration;
-					this.emit(ClipEvent.ENDED);
+					this.emit(MediaPlayerEvent.ENDED);
 					return;
 				}
 			}
@@ -801,16 +710,16 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 	 */
 	private readyBorBuffering() {
 		if (this.loadingTimerId === null) {
+			this.bufferingSyncId = this.asyncId;
+			const currentPlaybackTime = this.getPlaybackTime();
+			this.bufferingContextTime = this.audioContext!.currentTime;
+
 			this.loadingTimerId = setTimeout(() => {
 				// Sync buffering state with current async operation to prevent stale buffering
-				this.bufferingSyncId = this.asyncId;
-
 				if (!this.isBuffering) {
-					const currentPlaybackTime = this.getPlaybackTime();
 					this.isBuffering = true;
 					this.bufferingStartPlaybackTime = currentPlaybackTime;
-					this.bufferingContextTime = this.audioContext!.currentTime;
-					this.emit(ClipEvent.BUFFERING_START);
+					this.emit(MediaPlayerEvent.BUFFERING_START);
 				}
 			}, this.loadingDelayMs);
 		}
@@ -843,7 +752,7 @@ export class MediaPlayer extends EventEmitter<ClipEventMap> {
 			this.audioContextStartTime = this.audioContext!.currentTime;
 			this.isBuffering = false;
 			this.bufferingStartPlaybackTime = null;
-			this.emit(ClipEvent.BUFFERING_END, {
+			this.emit(MediaPlayerEvent.BUFFERING_END, {
 				lag,
 			});
 			this.bufferingContextTime = null;

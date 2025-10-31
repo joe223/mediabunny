@@ -1,7 +1,7 @@
-import { MediaPlayer, ClipEvent, PlaybackCommandType } from "./media-player.js";
+import { MediaPlayer, MediaPlayerEvent } from "./media-player.js";
 
-const SampleMp3FileUrl =
-	"https://cdn.freesound.org/previews/829/829679_5674468-lq.mp3";
+const SampleMp3FileUrl = 'http://127.0.0.1:8083/output_large.mp3'
+	// "https://cdn.freesound.org/previews/829/829679_5674468-lq.mp3";
 const SampleMp4FileUrl =
 	"https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
@@ -157,7 +157,7 @@ controlsContainer.insertBefore(
 	controlsContainer.querySelector("#status")
 );
 
-clip.on(ClipEvent.READY, () => {
+clip.on(MediaPlayerEvent.READY, () => {
 	console.log("ready");
 	statusEl.textContent = "ready";
 	const state = clip.getState();
@@ -168,17 +168,17 @@ clip.on(ClipEvent.READY, () => {
 	timeEl.textContent = `${formatTime(0)} / ${formatTime(durationSec)} (${0})`;
 });
 
-clip.on(ClipEvent.PLAY, () => {
+clip.on(MediaPlayerEvent.PLAY, () => {
 	console.log("play");
 	statusEl.textContent = "playing";
 });
 
-clip.on(ClipEvent.PAUSE, () => {
+clip.on(MediaPlayerEvent.PAUSE, () => {
 	console.log("pause");
 	statusEl.textContent = "paused";
 });
 
-clip.on(ClipEvent.ENDED, () => {
+clip.on(MediaPlayerEvent.ENDED, () => {
 	console.log("ended");
 	statusEl.textContent = "ended";
 	timeEl.textContent = `${formatTime(durationSec)} / ${formatTime(
@@ -186,22 +186,22 @@ clip.on(ClipEvent.ENDED, () => {
 	)}`;
 });
 
-clip.on(ClipEvent.ERROR, (error: any) => {
+clip.on(MediaPlayerEvent.ERROR, (error: any) => {
 	console.error("error", error);
 	statusEl.textContent = "error: " + error.message;
 });
 
-clip.on(ClipEvent.BUFFERING_START, () => {
+clip.on(MediaPlayerEvent.BUFFERING_START, () => {
 	console.log("buffering start");
 	loadingEl.style.display = "";
 });
 
-clip.on(ClipEvent.BUFFERING_END, ({lag}) => {
+clip.on(MediaPlayerEvent.BUFFERING_END, ({ lag }) => {
 	console.log("buffering end", lag);
 	loadingEl.style.display = "none";
 });
 
-clip.on(ClipEvent.TIME_UPDATE, (data: { time: number }) => {
+clip.on(MediaPlayerEvent.TIME_UPDATE, (data: { time: number }) => {
 	const t = data.time;
 	if (!isScrubbing) {
 		progressEl.value = String(t);
@@ -209,7 +209,7 @@ clip.on(ClipEvent.TIME_UPDATE, (data: { time: number }) => {
 	timeEl.textContent = `${formatTime(t)} / ${formatTime(durationSec)} (${t})`;
 });
 
-clip.on(ClipEvent.SEEKED, ({ at }: { at: number }) => {
+clip.on(MediaPlayerEvent.SEEKED, ({ at }: { at: number }) => {
 	console.log("seeked", at);
 	progressEl.value = String(at);
 	timeEl.textContent = `${formatTime(at)} / ${formatTime(durationSec)}`;

@@ -3,6 +3,7 @@
 		"target": "ES2021",
 		"module": "esnext",
 		"strict": true,
+		"moduleResolution": "nodenext",
 		"noImplicitAny": true,
 		"noImplicitOverride": true,
 		"noUncheckedIndexedAccess": true,
