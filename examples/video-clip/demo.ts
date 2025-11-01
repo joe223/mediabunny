@@ -1,7 +1,19 @@
-import { MediaPlayer, MediaPlayerEvent } from "./media-player.js";
+import {
+	MediaPlayer as WebCodecMediaPlayer,
+	MediaPlayerEvent,
+} from "./media-player.js";
+import { CompatibleMediaPlayer } from "./compatible-media-player.js";
 
-const SampleMp3FileUrl = 'http://127.0.0.1:8083/output_large.mp3'
-	// "https://cdn.freesound.org/previews/829/829679_5674468-lq.mp3";
+const getMediaPlayerClass = () => {
+	const useCompatible =
+		localStorage.getItem("mediaPlayerImpl") === "compatible";
+	return useCompatible ? CompatibleMediaPlayer : WebCodecMediaPlayer;
+};
+
+let MediaPlayer = getMediaPlayerClass();
+
+const SampleMp3FileUrl =
+	"https://cdn.freesound.org/previews/829/829679_5674468-lq.mp3";
 const SampleMp4FileUrl =
 	"https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
@@ -12,150 +24,48 @@ const statusEl = document.getElementById("status")!;
 const timeEl = document.getElementById("time")!;
 const progressEl = document.getElementById("progress") as HTMLInputElement;
 
-// Format seconds to mm:ss or hh:mm:ss
-function formatTime(sec: number): string {
-	if (!Number.isFinite(sec)) return "--:--";
-	// Round to milliseconds for stable display and correct rollover
-	const totalMs = Math.max(0, Math.round(sec * 1000));
-	const h = Math.floor(totalMs / 3600000);
-	const remH = totalMs % 3600000;
-	const m = Math.floor(remH / 60000);
-	const remM = remH % 60000;
-	const s = Math.floor(remM / 1000);
-	const ms = remM % 1000;
-
-	const hh = String(h);
-	const mm = String(m).padStart(2, "0");
-	const ss = String(s).padStart(2, "0");
-	const mmm = String(ms).padStart(3, "0");
-
-	return h > 0 ? `${hh}:${mm}:${ss}.${mmm}` : `${mm}:${ss}.${mmm}`;
-}
-
 let isScrubbing = false;
 let durationSec = 0;
 progressEl.disabled = true;
+// Volume reduction interval (seconds) and level
+const volumeReduceStart = 20; // 20 seconds
+const volumeReduceEnd = 30; // 30 seconds
+const reducedVolume = 0.1; // Volume level during 20-30s
 
 const clip = new MediaPlayer({
 	canvas,
 	enableAudio: true,
 	canvasSize: { width: 640, height: 640 },
+	onCreateAudioSource: ({
+		audioContext,
+		sourceNode,
+		timestamp,
+		duration,
+		timelineNow,
+	}) => {
+		const volumeReduceEnabled = volumeReduceCheckbox.checked;
+
+		if (!volumeReduceEnabled) {
+			return;
+		}
+
+		const g = audioContext.createGain();
+		const startACTime =
+			audioContext.currentTime + (volumeReduceStart - timelineNow);
+		const endAcTime =
+			audioContext.currentTime + (volumeReduceEnd - timelineNow);
+
+		if (startACTime >= 0) g.gain.setValueAtTime(reducedVolume, startACTime);
+		if (endAcTime >= 0) g.gain.setValueAtTime(1, endAcTime);
+
+		return g;
+	},
 });
 
 // ----- Audio controls: volume, mute, per-chunk envelope (via onCreateAudioSource) -----
 let currentVolume = 1;
 let isMuted = false;
 clip.setVolume(currentVolume);
-
-// Create UI controls dynamically to avoid modifying HTML
-const controlsContainer = statusEl.parentElement as HTMLDivElement; // the big controls column
-const audioControls = document.createElement("div");
-audioControls.className = "flex gap-2 items-center";
-
-// Volume label
-const volLabel = document.createElement("label");
-volLabel.textContent = "音量";
-volLabel.className = "text-sm opacity-80";
-
-// Volume slider
-const volSlider = document.createElement("input");
-volSlider.type = "range";
-volSlider.min = "0";
-volSlider.max = "1";
-volSlider.step = "0.01";
-volSlider.value = String(currentVolume);
-volSlider.id = "volume-slider";
-volSlider.className = "w-40";
-volSlider.addEventListener("input", () => {
-	const v = parseFloat(volSlider.value);
-	if (!Number.isFinite(v)) return;
-	currentVolume = Math.max(0, Math.min(1, v));
-	clip.setVolume(currentVolume);
-});
-
-// Mute toggle
-const muteBtn = document.createElement("button");
-muteBtn.id = "mute-toggle";
-muteBtn.textContent = "静音";
-muteBtn.className =
-	"rounded-lg bg-zinc-200 dark:bg-zinc-750 hover:bg-zinc-300 dark:hover:bg-zinc-700 px-3 py-1";
-muteBtn.addEventListener("click", () => {
-	if (isMuted) {
-		clip.unmute();
-		isMuted = false;
-		muteBtn.textContent = "静音";
-	} else {
-		clip.mute();
-		isMuted = true;
-		muteBtn.textContent = "取消静音";
-	}
-});
-
-audioControls.appendChild(volLabel);
-audioControls.appendChild(volSlider);
-audioControls.appendChild(muteBtn);
-// Checkbox: enable per-chunk fade in/out via onCreateAudioSource
-const chunkEnvLabel = document.createElement("label");
-chunkEnvLabel.className = "flex items-center gap-2 text-sm opacity-80";
-const chunkEnvCheckbox = document.createElement("input");
-chunkEnvCheckbox.type = "checkbox";
-chunkEnvCheckbox.id = "chunk-envelope";
-const chunkEnvText = document.createElement("span");
-chunkEnvText.textContent = "启用整段首尾淡入淡出（2s）";
-chunkEnvLabel.appendChild(chunkEnvCheckbox);
-chunkEnvLabel.appendChild(chunkEnvText);
-
-// onCreateAudioSource-based envelope: fade in first 2s of clip, fade out last 2s
-chunkEnvCheckbox.addEventListener("change", () => {
-	const enabled = chunkEnvCheckbox.checked;
-	if (!enabled) {
-		clip.onCreateAudioSource = undefined;
-		return;
-	}
-	const fadeInSec = 2;
-	const fadeOutSec = 2;
-	clip.onCreateAudioSource = ({
-		audioContext,
-		sourceNode,
-		timestamp,
-		timelineNow,
-	}) => {
-		const g = audioContext.createGain();
-		const startACtime = audioContext.currentTime + (timestamp - timelineNow);
-		const dur = sourceNode.buffer?.duration ?? 0;
-		const duration = durationSec; // set on READY
-
-		if (!Number.isFinite(duration) || duration <= 0 || dur <= 0) {
-			g.gain.setValueAtTime(1, startACtime);
-			return g;
-		}
-
-		const fadeOutStart = Math.max(0, duration - fadeOutSec);
-		const fadeOutEnd = duration;
-
-		const envelopeAt = (t: number): number => {
-			if (t <= 0) return 0;
-			if (t < fadeInSec) return Math.max(0, Math.min(1, t / fadeInSec));
-			if (t <= fadeOutStart) return 1;
-			if (t < fadeOutEnd)
-				return Math.max(0, Math.min(1, (fadeOutEnd - t) / fadeOutSec));
-			return 0;
-		};
-
-		const gStart = envelopeAt(timestamp);
-		const gEnd = envelopeAt(timestamp + dur);
-		g.gain.setValueAtTime(gStart, startACtime);
-		g.gain.linearRampToValueAtTime(gEnd, startACtime + dur);
-
-		return g;
-	};
-});
-
-audioControls.appendChild(chunkEnvLabel);
-controlsContainer.insertBefore(
-	audioControls,
-	controlsContainer.querySelector("#status")
-);
 
 clip.on(MediaPlayerEvent.READY, () => {
 	console.log("ready");
@@ -214,6 +124,132 @@ clip.on(MediaPlayerEvent.SEEKED, ({ at }: { at: number }) => {
 	progressEl.value = String(at);
 	timeEl.textContent = `${formatTime(at)} / ${formatTime(durationSec)}`;
 });
+
+// Format seconds to mm:ss or hh:mm:ss
+function formatTime(sec: number): string {
+	if (!Number.isFinite(sec)) return "--:--";
+	// Round to milliseconds for stable display and correct rollover
+	const totalMs = Math.max(0, Math.round(sec * 1000));
+	const h = Math.floor(totalMs / 3600000);
+	const remH = totalMs % 3600000;
+	const m = Math.floor(remH / 60000);
+	const remM = remH % 60000;
+	const s = Math.floor(remM / 1000);
+	const ms = remM % 1000;
+
+	const hh = String(h);
+	const mm = String(m).padStart(2, "0");
+	const ss = String(s).padStart(2, "0");
+	const mmm = String(ms).padStart(3, "0");
+
+	return h > 0 ? `${hh}:${mm}:${ss}.${mmm}` : `${mm}:${ss}.${mmm}`;
+}
+
+// Clamp a number to [0, 1]
+function clamp01(v: number): number {
+	return Math.max(0, Math.min(1, v));
+}
+
+// Create UI controls dynamically to avoid modifying HTML
+const controlsContainer = statusEl.parentElement as HTMLDivElement; // the big controls column
+const audioControls = document.createElement("div");
+audioControls.className = "flex gap-2 items-center";
+
+// Volume label
+const volLabel = document.createElement("label");
+volLabel.textContent = "音量";
+volLabel.className = "text-sm opacity-80";
+
+// Volume slider
+const volSlider = document.createElement("input");
+volSlider.type = "range";
+volSlider.min = "0";
+volSlider.max = "1";
+volSlider.step = "0.01";
+volSlider.value = String(currentVolume);
+volSlider.id = "volume-slider";
+volSlider.className = "w-40";
+volSlider.addEventListener("input", () => {
+	const v = parseFloat(volSlider.value);
+	if (!Number.isFinite(v)) return;
+	currentVolume = clamp01(v);
+	clip.setVolume(currentVolume);
+});
+
+// Mute toggle
+const muteBtn = document.createElement("button");
+muteBtn.id = "mute-toggle";
+muteBtn.textContent = "静音";
+muteBtn.className =
+	"rounded-lg bg-zinc-200 dark:bg-zinc-750 hover:bg-zinc-300 dark:hover:bg-zinc-700 px-3 py-1";
+muteBtn.addEventListener("click", () => {
+	if (isMuted) {
+		clip.unmute();
+		isMuted = false;
+		muteBtn.textContent = "静音";
+	} else {
+		clip.mute();
+		isMuted = true;
+		muteBtn.textContent = "取消静音";
+	}
+});
+
+audioControls.appendChild(volLabel);
+audioControls.appendChild(volSlider);
+audioControls.appendChild(muteBtn);
+
+// Checkbox: enable volume reduction within configured interval
+const volumeReduceLabel = document.createElement("label");
+volumeReduceLabel.className = "flex items-center gap-2 text-sm opacity-80";
+const volumeReduceCheckbox = document.createElement("input");
+volumeReduceCheckbox.type = "checkbox";
+volumeReduceCheckbox.id = "volume-reduce-30-40";
+// Load persisted state from localStorage
+volumeReduceCheckbox.checked =
+	localStorage.getItem("volumeReduce30-40") === "true";
+const volumeReduceText = document.createElement("span");
+volumeReduceText.textContent = "第20-30秒音量降至0.1";
+volumeReduceLabel.appendChild(volumeReduceCheckbox);
+volumeReduceLabel.appendChild(volumeReduceText);
+
+audioControls.appendChild(volumeReduceLabel);
+
+// Persist volume reduction toggle
+volumeReduceCheckbox.addEventListener("change", () => {
+	// Save state to localStorage
+	localStorage.setItem(
+		"volumeReduce30-40",
+		String(volumeReduceCheckbox.checked)
+	);
+});
+
+controlsContainer.insertBefore(
+	audioControls,
+	controlsContainer.querySelector("#status")
+);
+
+// Media Player implementation switcher
+const switcherLabel = document.createElement("label");
+switcherLabel.className = "flex items-center gap-2 text-sm opacity-80";
+const switcherCheckbox = document.createElement("input");
+switcherCheckbox.type = "checkbox";
+switcherCheckbox.checked =
+	localStorage.getItem("mediaPlayerImpl") === "compatible";
+switcherCheckbox.addEventListener("change", () => {
+	localStorage.setItem(
+		"mediaPlayerImpl",
+		switcherCheckbox.checked ? "compatible" : "default"
+	);
+	window.location.reload();
+});
+const switcherText = document.createElement("span");
+switcherText.textContent = "Use CompatibleMediaPlayer (HTML Video)";
+switcherLabel.appendChild(switcherCheckbox);
+switcherLabel.appendChild(switcherText);
+controlsContainer.insertBefore(
+	switcherLabel,
+	controlsContainer.querySelector("#status")
+);
 
 document.getElementById("play")!.addEventListener("click", () => {
 	void clip.play();

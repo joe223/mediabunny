@@ -105,9 +105,11 @@ export interface OnCreateAudioSourceParams {
 	/** The AudioContext currently used by this player */
 	audioContext: AudioContext;
 	/** The freshly created AudioBufferSourceNode carrying the decoded audio buffer */
-	sourceNode: AudioBufferSourceNode;
+	sourceNode: AudioBufferSourceNode | MediaElementAudioSourceNode;
 	/** The media timestamp in seconds of this audio buffer */
 	timestamp: number;
+	/** Total duration of the sourceNode in seconds */
+	duration: number;
 	/** The current playback time on the player's timeline in seconds */
 	timelineNow: number;
 }
@@ -131,6 +133,11 @@ export interface MediaPlayerOptions {
 	loadingDelayMs?: number;
 	/** Override canvas dimensions. Default: use video's native size */
 	canvasSize?: { width: number; height: number };
+
+	/** Optional hook for custom audio processing */
+	onCreateAudioSource?: (
+		params: OnCreateAudioSourceParams
+	) => GainNode | null | undefined;
 }
 
 /**
@@ -373,10 +380,10 @@ export function isMediaPlayer(obj: any): obj is IMediaPlayer {
  * Abstract base class that provides common functionality for media player implementations.
  * Concrete implementations should extend this class and implement the abstract methods.
  */
-export abstract class BaseMediaPlayer extends EventEmitter<MediaPlayerEventMap> implements IMediaPlayer {
-	/** Optional hook for custom audio processing */
-	onCreateAudioSource?: (params: OnCreateAudioSourceParams) => AudioNode | null;
-
+export abstract class BaseMediaPlayer
+	extends EventEmitter<MediaPlayerEventMap>
+	implements IMediaPlayer
+{
 	/** Configuration options passed during construction */
 	protected readonly options: MediaPlayerOptions;
 
@@ -425,3 +432,7 @@ export abstract class BaseMediaPlayer extends EventEmitter<MediaPlayerEventMap> 
 		this.emit(MediaPlayerEvent.TIME_UPDATE, { time });
 	}
 }
+
+export const DEFAULT_VOLUME = 1;
+export const MAX_VOLUME = 10;
+export const MIN_VOLUME = 0;

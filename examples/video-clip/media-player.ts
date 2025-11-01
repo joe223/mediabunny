@@ -23,6 +23,8 @@ import {
 	MediaProbeResult,
 	OnCreateAudioSourceParams,
 	MediaPlayerOptions,
+	MIN_VOLUME,
+	MAX_VOLUME,
 } from "./media-player-interface.js";
 
 export { MediaPlayerEvent };
@@ -427,6 +429,7 @@ export class MediaPlayer extends BaseMediaPlayer {
 		if (this.audioContext?.state === "suspended") {
 			await this.audioContext.resume();
 		}
+		this.setupAudioContext();
 		// snap to start
 		// if (this.getPlaybackTime() >= this.totalDuration) {
 		// 	this.playbackTimeAtStart = 0;
@@ -436,14 +439,15 @@ export class MediaPlayer extends BaseMediaPlayer {
 		this.audioContextStartTime = this.audioContext!.currentTime;
 		this.playing = true;
 		this.startRenderLoop();
+		this.emit(MediaPlayerEvent.PLAY);
+	}
 
+	private setupAudioContext(): void {
 		if (this.audioSink) {
 			void this.audioBufferIterator?.return();
 			this.audioBufferIterator = this.audioSink.buffers(this.getPlaybackTime());
 			void this.runAudioIterator();
 		}
-
-		this.emit(MediaPlayerEvent.PLAY);
 	}
 
 	/**
@@ -468,6 +472,7 @@ export class MediaPlayer extends BaseMediaPlayer {
 		// Stop queued audio
 		for (const node of this.queuedAudioNodes) node.stop();
 		this.queuedAudioNodes.clear();
+		this.audioContext?.suspend();
 
 		this.emit(MediaPlayerEvent.PAUSE);
 	}
@@ -498,6 +503,8 @@ export class MediaPlayer extends BaseMediaPlayer {
 		if (wasPlaying) this.pause();
 
 		this.playbackTimeAtStart = seekTo;
+		this.emitTimeUpdate(this.playbackTimeAtStart);
+
 		await this.startVideoIterator();
 
 		if (wasPlaying && this.playbackTimeAtStart < this.totalDuration)
@@ -516,7 +523,7 @@ export class MediaPlayer extends BaseMediaPlayer {
 	 * ```
 	 */
 	setVolume(vol: number): void {
-		this.volume = Math.max(0, Math.min(vol, 1));
+		this.volume = this.clamp(vol, MIN_VOLUME, MAX_VOLUME);
 		this.updateVolume();
 	}
 
@@ -670,7 +677,7 @@ export class MediaPlayer extends BaseMediaPlayer {
 
 				// Emit time update events during active playback (throttling can be added if needed)
 				if (this.playing && !this.isBuffering) {
-					this.emit(MediaPlayerEvent.TIME_UPDATE, { time: playbackTime });
+					this.emitTimeUpdate(playbackTime);
 				}
 
 				// Render the next frame if it's ready and due for display
@@ -843,10 +850,11 @@ export class MediaPlayer extends BaseMediaPlayer {
 			node.buffer = buffer;
 
 			// Allow custom audio processing (e.g., effects, gain envelopes)
-			const customAudioNode = this.onCreateAudioSource?.({
+			const customAudioNode = this.options.onCreateAudioSource?.({
 				audioContext: this.audioContext!,
 				sourceNode: node,
 				timestamp,
+				duration: buffer.duration,
 				timelineNow,
 			});
 
@@ -927,7 +935,7 @@ export class MediaPlayer extends BaseMediaPlayer {
 	 */
 	private updateVolume(): void {
 		const actual = this.volumeMuted ? 0 : this.volume;
-		this.gainNode!.gain.value = actual ** 2; // Quadratic taper for natural volume curve
+		this.gainNode!.gain.setValueAtTime(actual, this.audioContext!.currentTime);
 	}
 
 	/**
